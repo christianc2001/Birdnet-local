@@ -42,30 +42,22 @@ def borrar_audio(nombre_archivo):
     except FileNotFoundError:
         print(f"Archivo {nombre_archivo}.wav no encontrado.")
 
-def borrar_archivos_si_no_cumplen_condicion(input_file, columna, valor_umbral):
+def borrar_archivos(resultsTable, audiofile):
     
     try:
-        df = pd.read_csv(input_file)
+        df = pd.read_csv(resultsTable)
     except FileNotFoundError:
-        print(f"El archivo {input_file} no fue encontrado.")
+        print(f"El archivo {resultsTable} no fue encontrado.")
         return False  
 
     # Verificar si las columnas especificadas existen en el DataFrame
-    if columna not in df.columns or 'Filename' not in df.columns:
-        print("Una o ambas columnas especificadas no existen en el archivo CSV.")
+    if 'Filename' not in df.columns:
+        print("La columna especificada no existen en el archivo CSV.")
         return False
 
-    # Iterar sobre cada fila del DataFrame
-    for index, row in df.iterrows():
-        archivo = row['Filename']
-        condicion = row[columna]
-
-        # Verificar la condición
-        if condicion < valor_umbral:
-            # Eliminar el archivo si no cumple la condición
-            if os.path.exists(archivo):
-                os.remove(archivo)
-                print(f"Se ha eliminado el archivo '{archivo}' porque '{columna}' < {valor_umbral}.")
+    if not audiofile in df['Filename'].values:
+        os.remove("recordings/" + audiofile)
+        print(f"Se ha eliminado el archivo '{audiofile}' porque no se han realizado detecciones.")
 
     return True
 
@@ -87,18 +79,18 @@ with open(resultsPath, "w", encoding="utf-8") as rfile:
 
 # Definición del hilo para las inferencias en simultanea con la grabación
     
-def inference():
-    comando_a_ejecutar = f"python3 analyze.py --i recordings/{nombre_archivo}.wav --o {resultsPath} --locale es --rtype csv --min_conf 0.5"
+def inference(nombre_archivo):
+
+    comando_a_ejecutar = f"python3 analyze.py --i recordings/{nombre_archivo}.wav --o {resultsPath} --locale es --rtype csv --min_conf 0.7"
     os.system(comando_a_ejecutar) 
 
-    borrar_archivos_si_no_cumplen_condicion(resultsPath, 'Confidence', 0.8)
+    borrar_archivos(resultsPath, nombre_archivo+'.wav')
+    
 
 # Hilo principal de ejecución que graba audios de N segundos
 
 def run():
 
-    global nombre_archivo
-    
     while True:
 
         current_date = dt.datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
@@ -108,7 +100,7 @@ def run():
 
         grabar_audio(nombre_archivo, duracion_grabacion)
 
-        p = threading.Thread(target=inference)
+        p = threading.Thread(target=inference,args=[nombre_archivo])
         p.start()
 
 
