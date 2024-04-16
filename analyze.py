@@ -1,12 +1,12 @@
 """Module to analyze audio samples.
 """
-
 import argparse
 import datetime
 import json
 import operator
 import os
 import sys
+import pandas as pd
 import multiprocessing
 from multiprocessing import Pool, freeze_support
 
@@ -17,9 +17,6 @@ import config as cfg
 import model
 import species
 import utils
-
-#                    0       1      2           3             4              5               6                7           8             9           10         11
-RTABLE_HEADER = "Selection\tView\tChannel\tBegin Time (s)\tEnd Time (s)\tLow Freq (Hz)\tHigh Freq (Hz)\tCommon Name\tSpecies Code\tConfidence\tBegin Path\tFile Offset (s)\n"
 
 
 def loadCodes():
@@ -50,11 +47,13 @@ def saveResultFile(r: dict[str, list], path: str, afile_path: str):
     out_string = ""
 
     if cfg.RESULT_TYPE == "table":
+        # Raven selection header
+        header = "Selection\tView\tChannel\tBegin Path\tFile Duration (s)\tBegin Time (s)\tEnd Time (s)\tLow Freq (Hz)\tHigh Freq (Hz)\tSpecies Code\tCommon Name\tConfidence\n"
         selection_id = 0
         filename = os.path.basename(afile_path)
 
         # Write header
-        out_string += RTABLE_HEADER
+        out_string += header
 
         # Read native sample rate
         high_freq = audio.get_sample_rate(afile_path) / 2
@@ -74,17 +73,38 @@ def saveResultFile(r: dict[str, list], path: str, afile_path: str):
                 if c[1] > cfg.MIN_CONFIDENCE and (not cfg.SPECIES_LIST or c[0] in cfg.SPECIES_LIST):
                     selection_id += 1
                     label = cfg.TRANSLATED_LABELS[cfg.LABELS.index(c[0])]
-                    code = cfg.CODES[c[0]] if c[0] in cfg.CODES else c[0]
-                    rstring += f"{selection_id}\tSpectrogram 1\t1\t{start}\t{end}\t{low_freq}\t{high_freq}\t{label.split('_', 1)[-1]}\t{code}\t{c[1]:.4f}\t{afile_path}\t{start}\n"
+                    rstring += "{}\tSpectrogram 1\t1\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4f}\n".format(
+                        selection_id,
+                        afile_path,
+                        audio.getAudioFileLength(afile_path, cfg.SAMPLE_RATE),
+                        start,
+                        end,
+                        low_freq,
+                        high_freq,
+                        cfg.CODES[c[0]] if c[0] in cfg.CODES else c[0],
+                        label.split("_", 1)[-1],
+                        c[1],
+                    )
 
             # Write result string to file
             out_string += rstring
-
+        
         # If we don't have any valid predictions, we still need to add a line to the selection table in case we want to combine results
         # TODO: That's a weird way to do it, but it works for now. It would be better to keep track of file durations during the analysis.
-        if len(out_string) == len(RTABLE_HEADER) and cfg.OUTPUT_PATH is not None:
+        if len(out_string) == len(header) and cfg.OUTPUT_PATH is not None:
             selection_id += 1
-            out_string += f"{selection_id}\tSpectrogram 1\t1\t0\t3\t{low_freq}\t{high_freq}\tnocall\tnocall\t1.0\t{afile_path}\t0\n"
+            out_string += "{}\tSpectrogram 1\t1\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4f}\n".format(
+                selection_id,
+                afile_path,
+                audio.getAudioFileLength(afile_path, cfg.SAMPLE_RATE),
+                0,
+                3,
+                low_freq,
+                high_freq,
+                "nocall",
+                "nocall",
+                1.0,
+            )
 
     elif cfg.RESULT_TYPE == "audacity":
         # Audacity timeline labels
@@ -94,9 +114,7 @@ def saveResultFile(r: dict[str, list], path: str, afile_path: str):
             for c in r[timestamp]:
                 if c[1] > cfg.MIN_CONFIDENCE and (not cfg.SPECIES_LIST or c[0] in cfg.SPECIES_LIST):
                     label = cfg.TRANSLATED_LABELS[cfg.LABELS.index(c[0])]
-                    ts = timestamp.replace("-", "\t")
-                    lbl = label.replace("_", ", ")
-                    rstring += f"{ts}\t{lbl}\t{c[1]:.4f}\n"
+                    rstring += "{}\t{}\t{:.4f}\n".format(timestamp.replace("-", "\t"), label.replace("_", ", "), c[1])
 
             # Write result string to file
             out_string += rstring
@@ -168,11 +186,8 @@ def saveResultFile(r: dict[str, list], path: str, afile_path: str):
             out_string += rstring
 
     else:
-        # CSV output file
-        header = "Start (s),End (s),Scientific name,Common name,Confidence\n"
 
-        # Write header
-        out_string += header
+        filename = os.path.basename(afile_path)
 
         for timestamp in getSortedTimestamps(r):
             rstring = ""
@@ -182,30 +197,25 @@ def saveResultFile(r: dict[str, list], path: str, afile_path: str):
 
                 if c[1] > cfg.MIN_CONFIDENCE and (not cfg.SPECIES_LIST or c[0] in cfg.SPECIES_LIST):
                     label = cfg.TRANSLATED_LABELS[cfg.LABELS.index(c[0])]
-                    rstring += "{},{},{},{},{:.4f}\n".format(
-                        start, end, label.split("_", 1)[0], label.split("_", 1)[-1], c[1]
-                    )
+                    rstring += "{},{},{},{},{},{:.4f}\n".format(filename, start, end, label.split("_", 1)[0], label.split("_", 1)[-1], c[1])
 
             # Write result string to file
             out_string += rstring
 
-    # Save as file
-    with open(path, "w", encoding="utf-8") as rfile:
+    with open(path, "a", encoding="utf-8") as rfile:
         rfile.write(out_string)
-
 
 def combineResults(folder: str, output_file: str):
 
     # Read all files
-    files = utils.collect_all_files(folder, ["txt"], pattern="BirdNET.selection.table")
+    files = utils.collect_all_files(folder, "txt", pattern="BirdNET.selection.table")
 
-    # Combine all files
+    # Combine all files  
     s_id = 1
     time_offset = 0
-    audiofiles = set()
-
+    
     with open(os.path.join(folder, output_file), "w", encoding="utf-8") as f:
-        f.write(RTABLE_HEADER)
+        f.write("Selection\tView\tChannel\tBegin Path\tFile Duration (s)\tBegin Time (s)\tEnd Time (s)\tLow Freq (Hz)\tHigh Freq (Hz)\tSpecies Code\tCommon Name\tConfidence\n")
 
         for rfile in files:
             with open(rfile, "r", encoding="utf-8") as rf:
@@ -214,14 +224,11 @@ def combineResults(folder: str, output_file: str):
                     lines = rf.readlines()
 
                     # make sure it's a selection table
-                    if not "Selection" in lines[0] or not "File Offset" in lines[0]:
+                    if not "Selection" in lines[0] or not "File Duration" in lines[0]:
                         continue
 
                     # skip header and add to file
-                    f_name = lines[1].split("\t")[10]
-                    f_duration = audio.getAudioFileLength(f_name, cfg.SAMPLE_RATE)
-
-                    audiofiles.add(f_name)
+                    f_duration = float(lines[1].split("\t")[4])
 
                     for line in lines[1:]:
 
@@ -231,7 +238,7 @@ def combineResults(folder: str, output_file: str):
 
                         # Is species code and common name == 'nocall'?
                         # If so, that's a dummy line and we can skip it
-                        if line.split("\t")[7] == "nocall" and line.split("\t")[8] == "nocall":
+                        if line.split("\t")[9] == "nocall" and line.split("\t")[10] == "nocall":
                             continue
 
                         # adjust selection id
@@ -240,23 +247,18 @@ def combineResults(folder: str, output_file: str):
                         s_id += 1
 
                         # adjust time
-                        line[3] = str(float(line[3]) + time_offset)
-                        line[4] = str(float(line[4]) + time_offset)
+                        line[5] = str(float(line[5]) + time_offset)
+                        line[6] = str(float(line[6]) + time_offset)
 
                         # write line
                         f.write("\t".join(line))
 
                     # adjust time offset
-                    time_offset += f_duration
+                    time_offset += f_duration     
 
                 except Exception as ex:
                     print(f"Error: Cannot combine results from {rfile}.\n", flush=True)
-                    utils.writeErrorLog(ex)
-
-    listfilesname = output_file.rsplit(".", 1)[0] + ".list.txt"
-
-    with open(os.path.join(folder, listfilesname), "w", encoding="utf-8") as f:
-        f.writelines((f + "\n" for f in audiofiles))
+                    utils.writeErrorLog(ex)       
 
 
 def getSortedTimestamps(results: dict[str, list]):
@@ -339,7 +341,7 @@ def analyzeFile(item):
 
     # Process each chunk
     try:
-        while offset < fileLengthSeconds:
+        while offset < fileLengthSeconds: 
             chunks = getRawAudioFromFile(fpath, offset, duration)
             samples = []
             timestamps = []
@@ -402,11 +404,11 @@ def analyzeFile(item):
             os.makedirs(rdir, exist_ok=True)
 
             if cfg.RESULT_TYPE == "table":
-                rtype = ".BirdNET.selection.table.txt"
+                rtype = ".txt"
             elif cfg.RESULT_TYPE == "audacity":
-                rtype = ".BirdNET.results.txt"
+                rtype = ".txt"
             else:
-                rtype = ".BirdNET.results.csv"
+                rtype = ".csv"
 
             saveResultFile(results, os.path.join(cfg.OUTPUT_PATH, rpath.rsplit(".", 1)[0] + rtype), fpath)
         else:
@@ -420,7 +422,7 @@ def analyzeFile(item):
         return False
 
     delta_time = (datetime.datetime.now() - start_time).total_seconds()
-    print(f"Finished {fpath} in {delta_time:.2f} seconds", flush=True)
+    print("Finished {} in {:.2f} seconds".format(fpath, delta_time), flush=True)
 
     return True
 
@@ -457,16 +459,10 @@ if __name__ == "__main__":
         help="Detection sensitivity; Higher values result in higher sensitivity. Values in [0.5, 1.5]. Defaults to 1.0.",
     )
     parser.add_argument(
-        "--min_conf",
-        type=float,
-        default=0.1,
-        help="Minimum confidence threshold. Values in [0.01, 0.99]. Defaults to 0.1.",
+        "--min_conf", type=float, default=0.1, help="Minimum confidence threshold. Values in [0.01, 0.99]. Defaults to 0.1."
     )
     parser.add_argument(
-        "--overlap",
-        type=float,
-        default=0.0,
-        help="Overlap of prediction segments. Values in [0.0, 2.9]. Defaults to 0.0.",
+        "--overlap", type=float, default=0.0, help="Overlap of prediction segments. Values in [0.0, 2.9]. Defaults to 0.0."
     )
     parser.add_argument(
         "--rtype",
@@ -476,11 +472,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output_file",
         default=None,
-        help="Path to combined Raven selection table. If set and rtype is 'table', all results will be combined into this file. Defaults to None.",
+        help="Path to combined Raven selection table. If set and rtype is 'table', all results will be combined into this file. Defaults to None."
     )
-    parser.add_argument(
-        "--threads", type=int, default=min(8, max(1, multiprocessing.cpu_count() // 2)), help="Number of CPU threads."
-    )
+    parser.add_argument("--threads", type=int, default=min(8, max(1, multiprocessing.cpu_count() // 2)), help="Number of CPU threads.")
     parser.add_argument(
         "--batchsize", type=int, default=1, help="Number of samples to process at the same time. Defaults to 1."
     )
@@ -501,16 +495,16 @@ if __name__ == "__main__":
         help="Path to custom trained classifier. Defaults to None. If set, --lat, --lon and --locale are ignored.",
     )
     parser.add_argument(
-        "--fmin",
-        type=int,
-        default=cfg.SIG_FMIN,
-        help=f"Minimum frequency for bandpass filter in Hz. Defaults to {cfg.SIG_FMIN} Hz.",
+        "--fmin", 
+        type=int, 
+        default=cfg.SIG_FMIN, 
+        help="Minimum frequency for bandpass filter in Hz. Defaults to {} Hz.".format(cfg.SIG_FMIN)
     )
     parser.add_argument(
-        "--fmax",
-        type=int,
-        default=cfg.SIG_FMAX,
-        help=f"Maximum frequency for bandpass filter in Hz. Defaults to {cfg.SIG_FMAX} Hz.",
+        "--fmax", 
+        type=int, 
+        default=cfg.SIG_FMAX, 
+        help="Maximum frequency for bandpass filter in Hz. Defaults to {} Hz.".format(cfg.SIG_FMAX)
     )
 
     args = parser.parse_args()
@@ -537,7 +531,7 @@ if __name__ == "__main__":
             cfg.LABELS = utils.readLines(cfg.LABELS_FILE)
         else:
             cfg.APPLY_SIGMOID = False
-            cfg.LABELS_FILE = os.path.join(args.classifier, "labels", "label_names.csv")
+            cfg.LABELS_FILE = os.path.join(args.classifier, "labels", "label_names.csv") 
             cfg.LABELS = [line.split(",")[1] for line in utils.readLines(cfg.LABELS_FILE)]
 
         args.lat = -1
@@ -633,7 +627,7 @@ if __name__ == "__main__":
     flist = [(f, cfg.getConfig()) for f in cfg.FILE_LIST]
 
     # Analyze files
-    if cfg.CPU_THREADS < 2 or len(flist) < 2:
+    if cfg.CPU_THREADS < 2:
         for entry in flist:
             analyzeFile(entry)
     else:
@@ -641,11 +635,11 @@ if __name__ == "__main__":
             # Map analyzeFile function to each entry in flist
             results = p.map_async(analyzeFile, flist)
             # Wait for all tasks to complete
-            results.wait()
-
+            results.wait()            
+            
     # Combine results?
     if not cfg.OUTPUT_FILE is None:
-        print(f"Combining results into {cfg.OUTPUT_FILE}...", end="", flush=True)
+        print("Combining results into {}...".format(cfg.OUTPUT_FILE), end='', flush=True)
         combineResults(cfg.OUTPUT_PATH, cfg.OUTPUT_FILE)
         print("done!", flush=True)
 

@@ -72,8 +72,8 @@ CODES_FILE: str = "eBird_taxonomy_codes_2021E.json"
 SPECIES_LIST_FILE: str = "example/species_list.txt"
 
 # File input path and output path for selection tables
-INPUT_PATH: str = "example/"
-OUTPUT_PATH: str = "example/"
+INPUT_PATH: str = "recordings/"
+OUTPUT_PATH: str = "inferences/"
 
 # Supported file types
 ALLOWED_FILETYPES: list[str] = ["wav", "flac", "mp3", "ogg", "m4a", "wma", "aiff", "aif"]
@@ -90,7 +90,7 @@ SIGMOID_SENSITIVITY: float = 1.0
 # Minimum confidence score to include in selection table
 # (be aware: if APPLY_SIGMOID = False, this no longer represents
 # probabilities and needs to be adjusted)
-MIN_CONFIDENCE: float = 0.1
+MIN_CONFIDENCE: float = 0.5
 
 # Number of samples to process at the same time. Higher values can increase
 # processing speed, but will also increase memory usage.
