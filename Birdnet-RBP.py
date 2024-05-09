@@ -56,10 +56,10 @@ def borrar_archivos(resultsTable, audiofile):
         return False  
 
     # Busca en los últimos 5 chunks (maximo # de chunks si hay detecciones)
-    last5Results = df.tail(5)
+    last15Results = df.tail(15)
 
     Found = False
-    for index in range (last5Results.shape[1]):
+    for index in range (last15Results.shape[0]):
         if audiofile in df.iloc[index]['Filename']:
             Found = True
             continue
