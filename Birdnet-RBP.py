@@ -7,6 +7,8 @@ from scipy.io.wavfile import write
 import os
 from sendTelegram import send_message, send_audio
 
+filterClasses = ['Siren', 'Engine', 'Human whistle', 'Human vocal', 'Human non-vocal', 'Noise', 'Dog']
+
 # Función para verificar la existencia de los directorios adicionales necesarios
 def verificar_y_crear_directorio(ruta_directorio):
 
@@ -89,6 +91,7 @@ else:
 # Definición del hilo para enviar mensajes por Telegram
 def send_telegram_message(numEspecies_prev, nombre_archivo):
 
+    atLeastOne = False
     numEspecies_now = pd.read_csv(resultsPath).shape[0] - numEspecies_prev
     df = pd.read_csv(resultsPath).tail(numEspecies_now)
 
@@ -97,9 +100,13 @@ def send_telegram_message(numEspecies_prev, nombre_archivo):
         confidence = str(round(float(df.iloc[numEspecies_now-(i+1)]['Confidence'])*100, 2)) + '%'
         time = nombre_archivo
 
-        send_message([species, confidence, time])
+        if species in filterClasses:
+           print(f'Clase filtrada:{species}')
+        else:
+           send_message([species, confidence, time])
+           atLeastOne = True
 
-    if numEspecies_now > 0:
+    if numEspecies_now > 0 and atLeastOne:
         send_audio(nombre_archivo)
         
     borrar_archivos(resultsPath, nombre_archivo+'.wav')  
