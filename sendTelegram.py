@@ -1,8 +1,8 @@
 import requests
 from requests. exceptions import RequestException
 
-TOKEN = "6500572373:AAHvcqY7BUkKMG61nMd1OePxebhhCD--sAs"
-chat_id = "-1002011656112"
+TOKEN = ""
+chat_id = ""
 url = "https://api.telegram.org/bot"+TOKEN+"/sendMessage"
 
 def send_message(message_data):
