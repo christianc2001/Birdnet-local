@@ -5,6 +5,7 @@ import config as cfg
 import sounddevice as sd
 from scipy.io.wavfile import write
 import os
+from sendTelegram import send_message, send_audio
 
 # Función para verificar la existencia de los directorios adicionales necesarios
 def verificar_y_crear_directorio(ruta_directorio):
@@ -47,15 +48,15 @@ def borrar_audio(nombre_archivo):
 
 # Función para borrar archivos de audio sin detecciones por encima del umbral
 def borrar_archivos(resultsTable, audiofile):
-    
+
     # Verificar si el archivo CSV existe
     try:
         df = pd.read_csv(resultsTable)
     except FileNotFoundError:
         print(f"El archivo {resultsTable} no fue encontrado.")
-        return False  
+        return False
 
-    # Busca en los últimos 5 chunks (maximo # de chunks si hay detecciones)
+    # Busca en los últimos 15 datos
     last15Results = df.tail(15)
 
     Found = False
@@ -85,13 +86,32 @@ if not os.path.exists(resultsPath):
 else:
     print(f'El archivo {resultsPath} ya existe.')
 
-# Definición del hilo para las inferencias en simultanea con la grabación    
-def inference(nombre_archivo):
+# Definición del hilo para enviar mensajes por Telegram
+def send_telegram_message(numEspecies_prev, nombre_archivo):
+
+    numEspecies_now = pd.read_csv(resultsPath).shape[0] - numEspecies_prev
+    df = pd.read_csv(resultsPath).tail(numEspecies_now)
+
+    for i in range (0,numEspecies_now):
+        species = df.iloc[numEspecies_now-(i+1)]['Common name']
+        confidence = str(round(float(df.iloc[numEspecies_now-(i+1)]['Confidence'])*100, 2)) + '%'
+        time = nombre_archivo
+
+        send_message([species, confidence, time])
+
+    if numEspecies_now > 0:
+        send_audio(nombre_archivo)
+        
+    borrar_archivos(resultsPath, nombre_archivo+'.wav')  
+
+# Definición del hilo para las inferencias en simultanea con la grabación
+def inference(nombre_archivo, numEspecies_prev, current_date):
 
     comando_a_ejecutar = f"python3 analyze.py --i recordings/{nombre_archivo}.wav --o {resultsPath} --locale es --rtype csv --min_conf {cfg.MIN_CONFIDENCE}"
-    os.system(comando_a_ejecutar) 
+    os.system(comando_a_ejecutar)
 
-    borrar_archivos(resultsPath, nombre_archivo+'.wav')    
+    p2 = threading.Thread(target=send_telegram_message,args=[numEspecies_prev, nombre_archivo])
+    p2.start()
 
 # Hilo principal de ejecución que graba audios de N segundos
 def run():
@@ -100,14 +120,15 @@ def run():
 
         current_date = dt.datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
 
-        nombre_archivo = str(current_date)    
+        nombre_archivo = str(current_date)
         duracion_grabacion = 15
 
         grabar_audio(nombre_archivo, duracion_grabacion)
 
-        p = threading.Thread(target=inference,args=[nombre_archivo])
-        p.start()
+        numEspecies_prev = pd.read_csv(resultsPath).shape[0]
 
+        p1 = threading.Thread(target=inference,args=[nombre_archivo, numEspecies_prev, nombre_archivo])
+        p1.start()
 
 def main():
     run()
