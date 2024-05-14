@@ -106,8 +106,9 @@ def send_telegram_message(numEspecies_prev, nombre_archivo):
            send_message([species, confidence, time])
            atLeastOne = True
 
-    if numEspecies_now > 0 and atLeastOne:
-        send_audio(nombre_archivo)
+    if numEspecies_now > 0:
+        if atLeastOne == True:
+            send_audio(nombre_archivo)
         
     borrar_archivos(resultsPath, nombre_archivo+'.wav')  
 
